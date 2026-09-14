@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "ASYNC"]
+# Broad `except Exception` is intentional at adapter boundaries: cache, queue and
+# health probes are fail-open by design, and the API's catch-all handler exists
+# precisely so that no unexpected error reaches a client. Each one logs.
+ignore = [
+  "E501",    # line length is enforced by formatter conventions, not hard-failed
+  "B008",    # FastAPI Depends() in defaults is the framework idiom
+  "UP042",   # str+Enum keeps values JSON-serialisable on 3.10-compatible syntax
+  "UP047",   # PEP 695 generics not required here
+  "ASYNC109",# explicit timeout parameters are deliberate in the health probe API
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]

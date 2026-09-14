@@ -1,0 +1,102 @@
+# Local prototype stack. Every service in the architecture diagram is here and
+# actually used by the code: nothing is decorative.
+#
+# Production differences are called out per service and in docs/SUBMISSION.md.
+
+name: doc-search
+
+services:
+  api:
+    build: .
+    # Stateless: `docker compose up --scale api=3` is the whole horizontal-scaling story.
+    env_file: [.env]
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      opensearch: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=2).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  worker:
+    build: .
+    # Separate process, separate scaling axis: indexing throughput is independent
+    # of query throughput. Scale with `--scale worker=N`.
+    command: ["python", "-m", "app.workers.consumer"]
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+      opensearch: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-docsearch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
+      POSTGRES_DB: ${POSTGRES_DB:-docsearch}
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-docsearch} -d ${POSTGRES_DB:-docsearch}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # Cache + rate-limit counters only. `allkeys-lru` with a hard cap: the cache
+    # must never OOM the box, and losing it degrades rather than breaks the service.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  opensearch:
+    image: opensearchproject/opensearch:2.18.0
+    environment:
+      - discovery.type=single-node          # production: 3 dedicated masters + data nodes across AZs
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g  # production: 50% of RAM, max ~31g (compressed oops)
+      - DISABLE_SECURITY_PLUGIN=true        # PROTOTYPE ONLY: production enables TLS + RBAC
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock: {soft: -1, hard: -1}
+      nofile: {soft: 65536, hard: 65536}
+    ports: ["9200:9200"]
+    volumes: ["osdata:/usr/share/opensearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-docsearch}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-change-me-locally}
+    ports: ["5672:5672", "15672:15672"]   # 15672 = management UI: inspect the DLQ
+    volumes: ["mqdata:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  osdata:
+  mqdata:

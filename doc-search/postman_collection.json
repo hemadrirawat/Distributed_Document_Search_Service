@@ -1,0 +1,115 @@
+{
+  "info": {
+    "name": "Distributed Document Search Service",
+    "description": "Multi-tenant document search API. Set {{apiKey}} to a tenant API key; tenant identity is derived from it server-side.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8000"},
+    {"key": "apiKey", "value": "acme-dev-key-001"},
+    {"key": "tenantId", "value": "acme"},
+    {"key": "otherApiKey", "value": "globex-dev-key-002"},
+    {"key": "documentId", "value": ""}
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {"name": "Health with dependency status", "request": {"method": "GET", "url": "{{baseUrl}}/health"}},
+        {"name": "Liveness", "request": {"method": "GET", "url": "{{baseUrl}}/health/live"}},
+        {"name": "Readiness", "request": {"method": "GET", "url": "{{baseUrl}}/health/ready"}},
+        {"name": "Prometheus metrics", "request": {"method": "GET", "url": "{{baseUrl}}/metrics"}}
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "POST /documents - index a document",
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('accepted for asynchronous indexing', () => pm.response.to.have.status(202));",
+            "pm.collectionVariables.set('documentId', pm.response.json().id);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\n  \"title\": \"Q3 financial report\",\n  \"content\": \"Revenue grew 24% year over year, driven by enterprise renewals in EMEA.\",\n  \"content_type\": \"application/pdf\",\n  \"tags\": [\"finance\", \"q3\"],\n  \"metadata\": {\"department\": \"finance\", \"confidentiality\": \"internal\"}\n}"},
+            "url": "{{baseUrl}}/documents"
+          }
+        },
+        {
+          "name": "GET /documents/{id} - retrieve",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": "{{baseUrl}}/documents/{{documentId}}"}
+        },
+        {
+          "name": "GET /documents/{id} - cross-tenant returns 404",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{otherApiKey}}"}],
+                      "url": "{{baseUrl}}/documents/{{documentId}}"}
+        },
+        {
+          "name": "DELETE /documents/{id}",
+          "request": {"method": "DELETE", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": "{{baseUrl}}/documents/{{documentId}}"}
+        },
+        {
+          "name": "POST /documents - validation error (422)",
+          "request": {"method": "POST",
+                      "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}, {"key": "Content-Type", "value": "application/json"}],
+                      "body": {"mode": "raw", "raw": "{\n  \"title\": \"\"\n}"},
+                      "url": "{{baseUrl}}/documents"}
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "GET /search - basic",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": {"raw": "{{baseUrl}}/search?q=report&tenant={{tenantId}}",
+                              "host": ["{{baseUrl}}"], "path": ["search"],
+                              "query": [{"key": "q", "value": "report"}, {"key": "tenant", "value": "{{tenantId}}"}]}}
+        },
+        {
+          "name": "GET /search - paginated + highlighted",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": {"raw": "{{baseUrl}}/search?q=revenue&tenant={{tenantId}}&page=1&size=5&highlight=true",
+                              "host": ["{{baseUrl}}"], "path": ["search"],
+                              "query": [{"key": "q", "value": "revenue"}, {"key": "tenant", "value": "{{tenantId}}"},
+                                        {"key": "page", "value": "1"}, {"key": "size", "value": "5"},
+                                        {"key": "highlight", "value": "true"}]}}
+        },
+        {
+          "name": "GET /search - fuzzy (typo tolerant)",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": {"raw": "{{baseUrl}}/search?q=finacial&tenant={{tenantId}}&fuzzy=true",
+                              "host": ["{{baseUrl}}"], "path": ["search"],
+                              "query": [{"key": "q", "value": "finacial"}, {"key": "tenant", "value": "{{tenantId}}"},
+                                        {"key": "fuzzy", "value": "true"}]}}
+        },
+        {
+          "name": "GET /search - faceted",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": {"raw": "{{baseUrl}}/search?q=report&tenant={{tenantId}}&facets=true",
+                              "host": ["{{baseUrl}}"], "path": ["search"],
+                              "query": [{"key": "q", "value": "report"}, {"key": "tenant", "value": "{{tenantId}}"},
+                                        {"key": "facets", "value": "true"}]}}
+        },
+        {
+          "name": "GET /search - tenant mismatch returns 403",
+          "request": {"method": "GET", "header": [{"key": "X-API-Key", "value": "{{apiKey}}"}],
+                      "url": {"raw": "{{baseUrl}}/search?q=report&tenant=globex",
+                              "host": ["{{baseUrl}}"], "path": ["search"],
+                              "query": [{"key": "q", "value": "report"}, {"key": "tenant", "value": "globex"}]}}
+        },
+        {
+          "name": "GET /search - missing API key returns 401",
+          "request": {"method": "GET",
+                      "url": {"raw": "{{baseUrl}}/search?q=report",
+                              "host": ["{{baseUrl}}"], "path": ["search"], "query": [{"key": "q", "value": "report"}]}}
+        }
+      ]
+    }
+  ]
+}
